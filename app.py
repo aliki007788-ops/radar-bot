@@ -31,9 +31,11 @@ def init_db():
     conn = get_db()
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, first_name TEXT, joined_at TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER, visitor_id INTEGER, visitor_name TEXT, visitor_photo TEXT, timestamp TEXT, is_unlocked INTEGER DEFAULT 0, tx_hash TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER, visitor_id INTEGER, visitor_name TEXT, visitor_photo TEXT, timestamp TEXT, is_unlocked INTEGER DEFAULT 0, tx_hash TEXT, unlock_type TEXT DEFAULT 'single')''')
+    c.execute('''CREATE TABLE IF NOT EXISTS user_subscriptions (user_id INTEGER PRIMARY KEY, bundle_unlocked_at TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('price_usd', '0.99')")
+    c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('price_bundle_usd', '4.99')")
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('is_active', '1')")
     conn.commit()
     conn.close()
@@ -66,7 +68,13 @@ def get_ton_price():
         return 7.0
 
 def calculate_nanotons():
-    price_usd = float(get_setting('price_usd', 0.5))
+    price_usd = float(get_setting('price_usd', 0.99))
+    ton_price = get_ton_price()
+    ton_amount = price_usd / ton_price
+    return int(ton_amount * 1_000_000_000), price_usd
+
+def calculate_bundle_nanotons():
+    price_usd = float(get_setting('price_bundle_usd', 4.99))
     ton_price = get_ton_price()
     ton_amount = price_usd / ton_price
     return int(ton_amount * 1_000_000_000), price_usd
@@ -120,12 +128,14 @@ def handle_admin_commands(chat_id, text):
         user_count = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         visit_count = c.execute("SELECT COUNT(*) FROM visits").fetchone()[0]
         income_count = c.execute("SELECT COUNT(*) FROM visits WHERE is_unlocked=1").fetchone()[0]
-        price = get_setting('price_usd', '0.5')
+        price = get_setting('price_usd', '0.99')
+        bundle_price = get_setting('price_bundle_usd', '4.99')
         msg = (f"📊 Empire Stats\n"
                f"👥 Users: {user_count}\n"
                f"👁️ Total Visits: {visit_count}\n"
                f"🔓 Unlocks (Sales): {income_count}\n"
-               f"💵 Current Price: ${price}")
+               f"💵 Current Price: ${price}\n"
+               f"💳 Bundle Price: ${bundle_price}")
         send_msg(chat_id, msg)
     elif text and text.startswith('/setprice '):
         parts = text.split()
@@ -135,9 +145,20 @@ def handle_admin_commands(chat_id, text):
                 set_setting('price_usd', new_price)
                 send_msg(chat_id, f"✅ Price updated to ${new_price}")
             except ValueError:
-                send_msg(chat_id, "❌ Invalid amount. Usage: /setprice 0.5")
+                send_msg(chat_id, "❌ Invalid amount. Usage: /setprice 0.99")
         else:
-            send_msg(chat_id, "❌ Usage: /setprice 0.5")
+            send_msg(chat_id, "❌ Usage: /setprice 0.99")
+    elif text and text.startswith('/setprice_bundle '):
+        parts = text.split()
+        if len(parts) >= 2:
+            try:
+                new_price = float(parts[1])
+                set_setting('price_bundle_usd', new_price)
+                send_msg(chat_id, f"✅ Bundle price updated to ${new_price}")
+            except ValueError:
+                send_msg(chat_id, "❌ Invalid amount. Usage: /setprice_bundle 4.99")
+        else:
+            send_msg(chat_id, "❌ Usage: /setprice_bundle 4.99")
     elif text and text.startswith('/broadcast '):
         # broadcast is potentially heavy — انجام در پس‌زمینه بهتر است (اینجا ساده است)
         msg_text = text.replace('/broadcast ', '', 1)
@@ -154,6 +175,7 @@ def handle_admin_commands(chat_id, text):
         help_text = ("👮‍♂️ Admin Panel\n"
                      "/stats – View Statistics\n"
                      "/setprice [amount] – Change USD Price\n"
+                     "/setprice_bundle [amount] – Change Bundle USD Price\n"
                      "/broadcast [msg] – Message All Users")
         send_msg(chat_id, help_text)
 
@@ -169,6 +191,11 @@ def index():
 @app.route('/api/get_price')
 def api_get_price():
     nanotons, usd = calculate_nanotons()
+    return jsonify({"usd": usd, "nanotons": nanotons})
+
+@app.route('/api/get_bundle_price')
+def api_get_bundle_price():
+    nanotons, usd = calculate_bundle_nanotons()
     return jsonify({"usd": usd, "nanotons": nanotons})
 
 @app.route('/api/track', methods=['POST'])
@@ -206,11 +233,19 @@ def track():
         app.logger.exception("track error")
         return jsonify({"error": "server error"}), 500
 
-@app.route('/api/my_dashboard/<int:user_id>')
+@app.route('/api/my_dashboard/<user_id>')
 def dashboard(user_id):
     try:
         conn = get_db()
-        rows = conn.execute("SELECT * FROM visits WHERE owner_id=? ORDER BY timestamp DESC", (user_id,)).fetchall()
+        # چک کنیم که آیا کاربر بسته را خریده
+        sub = conn.execute("SELECT bundle_unlocked_at FROM user_subscriptions WHERE user_id=?", (user_id,)).fetchone()
+        if sub and sub['bundle_unlocked_at']:
+            # نمایش ۱۰۰ بازدید اخیر
+            rows = conn.execute("SELECT * FROM visits WHERE owner_id=? ORDER BY timestamp DESC LIMIT 100", (user_id,)).fetchall()
+        else:
+            # فقط بازدیدهای باز شده را نمایش بده
+            rows = conn.execute("SELECT * FROM visits WHERE owner_id=? AND is_unlocked=1 ORDER BY timestamp DESC", (user_id,)).fetchall()
+
         conn.close()
         result = [dict(r) for r in rows]
         return jsonify(result)
@@ -228,12 +263,34 @@ def unlock():
 
     try:
         conn = get_db()
-        conn.execute("UPDATE visits SET is_unlocked=1, tx_hash=? WHERE id=?", (boc, visit_id))
+        conn.execute("UPDATE visits SET is_unlocked=1, tx_hash=?, unlock_type='single' WHERE id=?", (boc, visit_id))
         conn.commit()
         conn.close()
         return jsonify({"success": True})
     except Exception:
         app.logger.exception("unlock error")
+        return jsonify({"success": False}), 500
+
+@app.route('/api/unlock_bundle', methods=['POST'])
+def unlock_bundle():
+    data = request.get_json(force=True, silent=True) or {}
+    boc = data.get('boc')
+    owner_id = data.get('owner_id')
+
+    if not owner_id or not boc:
+        return jsonify({"error": "owner_id and boc are required"}), 400
+
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        # ذخیره زمان خرید بسته
+        c.execute("INSERT OR REPLACE INTO user_subscriptions (user_id, bundle_unlocked_at) VALUES (?, ?)",
+                  (owner_id, datetime.utcnow().isoformat()))
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True})
+    except Exception as e:
+        app.logger.exception("unlock_bundle error")
         return jsonify({"success": False}), 500
 
 if __name__ == '__main__':
