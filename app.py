@@ -33,7 +33,7 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, first_name TEXT, joined_at TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER, visitor_id INTEGER, visitor_name TEXT, visitor_photo TEXT, timestamp TEXT, is_unlocked INTEGER DEFAULT 0, tx_hash TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
-    c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('price_usd', '0.5')")
+    c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('price_usd', '0.99')")
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('is_active', '1')")
     conn.commit()
     conn.close()
