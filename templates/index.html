@@ -2,171 +2,274 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width,initial-scale=1, viewport-fit=cover">
   <title>Radar | Global</title>
+
+  <!-- Telegram Web App -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <!-- TonConnect UI -->
+  <script src="https://unpkg.com/@tonconnect/ui@latest/dist/tonconnect-ui.min.js"></script>
+
   <style>
-    :root { --primary: #ffd54f; --bg: #050510; --card: #13132b; --text: #e0e0e0; }
-    body { background-color: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin:0; padding:20px; }
-    .card { background: var(--card); padding:20px; border-radius:12px; margin-bottom:15px; }
-    .btn { padding:12px 16px; border-radius:10px; border:none; font-weight:600; cursor:pointer; }
-    .btn-pay { background: linear-gradient(135deg,#ffd700,#ff9800); color:#111; }
-    .center { max-width:720px; margin:20px auto; }
-    .rtl { direction:rtl; }
-    .consent-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:9999; }
-    .consent-box { background:#111; padding:20px; border-radius:12px; max-width:420px; color:#fff; box-shadow:0 6px 30px rgba(0,0,0,0.6); }
-    .consent-title { font-size:18px; margin-bottom:8px; color:var(--primary); }
-    .muted { color:#aaa; font-size:13px; }
+    :root { --primary: #00ff88; --bg: #050510; --card: #13132b; --text: #e0e0e0; }
+    body { background-color: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; text-align: center; transition: 0.3s; }
+
+    .card { background: var(--card); padding: 20px; border-radius: 16px; margin-bottom: 15px; border: 1px solid rgba(255,255,255,0.05); box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+    .btn { width: 100%; padding: 15px; border-radius: 12px; border: none; font-weight: bold; font-size: 16px; cursor: pointer; margin-top: 10px; transition: transform 0.1s; }
+    .btn:active { transform: scale(0.98); }
+    .btn-pay { background: linear-gradient(135deg, #ffd700, #ff9800, #ff5722); color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.3); }
+    .btn-copy { background: #333; color: #fff; }
+
+    .avatar { width: 50px; height: 50px; border-radius: 50%; object-fit: cover; border: 2px solid var(--primary); }
+    .blur { filter: blur(6px); user-select: none; }
+    .row { display:flex; justify-content:space-between; align-items:center; text-align:left; padding:10px 0; border-bottom:1px solid rgba(255,255,255,0.05); gap:12px; }
+
+    .loader { border: 3px solid rgba(255,255,255,0.1); border-top: 3px solid var(--primary); border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; margin: 0 auto; }
+    @keyframes spin { 0% { transform: rotate(0deg);} 100% { transform: rotate(360deg);} }
+
+    /* RTL */
+    body.rtl { direction: rtl; }
+    body.rtl .row { text-align: right; }
+    .meta { color:#aaa; font-size:13px; line-height:1.5; }
+    .link-input { width:100%; padding:10px; background:#000; border:1px solid #333; color:#fff; border-radius:8px; text-align:center; }
   </style>
 </head>
 <body id="main-body">
-  <div class="center">
-    <h1 id="lbl-title">Radar</h1>
-    <div class="card" id="main-card">
-      <p id="lbl-share-desc" class="muted">…</p>
-      <input id="my-link" type="text" style="width:100%;padding:10px;border-radius:8px;border:1px solid #222;background:#000;color:#fff" readonly>
-      <button id="btn-copy" class="btn" style="margin-top:12px;">Copy</button>
-    </div>
 
-    <div id="visits-list" class="card"></div>
+  <div id="ton-connect" style="display:flex; justify-content:center; margin-bottom:25px;"></div>
+
+  <h2 id="lbl-title" style="margin-bottom:5px;">Radar</h2>
+  <div id="loading" class="loader"></div>
+
+  <div id="dashboard-view" style="display:none;">
+    <div class="card">
+      <p id="lbl-share-desc" class="meta">…</p>
+      <div style="display:flex; gap:5px;">
+        <input type="text" id="my-link" class="link-input" readonly>
+      </div>
+      <button class="btn btn-copy" onclick="copyLink()" id="btn-copy">Copy</button>
+    </div>
+    <div id="visits-list"></div>
   </div>
 
-  <div id="consent-overlay" style="display:none"></div>
+  <div id="visitor-view" style="display:none;">
+    <div class="card" style="padding:40px 20px;">
+      <div style="font-size:40px;">⚠️</div>
+      <h3 id="lbl-caught" style="margin:10px 0;">…</h3>
+      <p id="lbl-caught-desc" style="color:#ccc; font-size:14px; line-height:1.6;">…</p>
+    </div>
+    <button class="btn btn-pay" onclick="window.location.href='/'" id="btn-create">…</button>
+  </div>
 
 <script>
-(function(){
+  // تعامل با Telegram WebApp
   const tg = window.Telegram?.WebApp;
-  try { tg?.expand(); } catch(e){}
+  try { tg?.expand(); } catch(e){ /* ignore */ }
+
+  // کاربر ممکن است undefined باشد در صورت باز کردن بیرون از تلگرام
   const user = tg?.initDataUnsafe?.user || null;
 
-  // translations for consent + basic strings (9 langs)
+  // دیکشنری ۹ زبانه با کلیدهای استاندارد زبان
   const i18n = {
-    en: { title: "Radar Profile", share: "Share this link to see who stalks you.", copy: "Copy Link", consent_title: "✨ This profile uses Radar", consent_text: "By visiting this link you agree that your public info (name, profile photo, ID) may be shown to the owner. ", consent_more: "Learn more", consent_accept: "I Agree", caught: "Visit Recorded!", caught_desc: "This user tracks profile visits. Your info may be captured.", unknown: "Anonymous" },
-    fa: { title: "رادار پروفایل", share: "این لینک را در بیو بگذارید تا ببینید چه کسی پروفایل شما را چک می‌کند.", copy: "کپی لینک", consent_title: "✨ این پروفایل از رادار استفاده می‌کند", consent_text: "با بازدید از این لینک، موافقت می‌کنید که اطلاعات عمومی شما (نام، عکس، شناسه) به صاحب لینک نمایش داده شود. ", consent_more: "بیشتر بدانید", consent_accept: "قبول دارم", caught: "بازدید ثبت شد!", caught_desc: "این کاربر رادار دارد و اطلاعات ممکن است ثبت شود.", unknown: "ناشناس" },
-    ru: { title:"Радар Профиля", share:"Поделитесь этой ссылкой, чтобы узнать, кто заходил.", copy:"Скопировать", consent_title:"✨ Этот профиль использует Радар", consent_text:"Посещая ссылку, вы соглашаетесь, что ваша публичная информация может быть показана владельцу.", consent_more:"Подробнее", consent_accept:"Я согласен", caught:"Визит записан!", caught_desc:"Этот пользователь отслеживает визиты.", unknown:"Аноним" },
-    es: { title:"Radar de Perfil", share:"Comparte esto para ver quién visita tu perfil.", copy:"Copiar enlace", consent_title:"✨ Este perfil usa Radar", consent_text:"Al visitar este enlace acepta que su información pública pueda mostrarse al propietario.", consent_more:"Más información", consent_accept:"Acepto", caught:"¡Visita Registrada!", caught_desc:"Este usuario monitorea visitantes.", unknown:"Anónimo" },
-    hi: { title:"प्रोफ़ाइल रडार", share:"यह देखने के लिए लिंक शेयर करें कि आपकी प्रोफ़ाइल कौन देखता है।", copy:"लिंक कॉपी करें", consent_title:"✨ यह प्रोफ़ाइल रडार का उपयोग करती है", consent_text:"इस लिंक पर जाने पर आप सहमत होते हैं कि आपकी सार्वजनिक जानकारी मालिक को दिखाई जा सकती है।", consent_more:"और पढ़ें", consent_accept:"मैं सहमत हूँ", caught:"विज़िट दर्ज की गई!", caught_desc:"यह उपयोगकर्ता विज़िटर को ट्रैक करता है।", unknown:"अज्ञात" },
-    ar: { title:"رادار الملف الشخصي", share:"شارك هذا الرابط لتعرف من يزور ملفك الشخصي.", copy:"نسخ الرابط", consent_title:"✨ هذا الملف يستخدم رادار", consent_text:"من خلال زيارة هذا الرابط، فإنك توافق على أن تُعرض معلوماتك العامة لصاحب الرابط.", consent_more:"اعرف أكثر", consent_accept:"أوافق", caught:"تم تسجيل الزيارة!", caught_desc:"هذا المستخدم يتتبع الزوار.", unknown:"مجهول" },
-    zh: { title:"个人资料雷达", share:"分享此链接以查看谁在查看您的个人资料。", copy:"复制链接", consent_title:"✨ 此个人资料使用雷达", consent_text:"访问此链接即表示您同意您的公开信息可能会显示给所有者。", consent_more:"了解更多", consent_accept:"我同意", caught:"访问已记录！", caught_desc:"该用户正在追踪访客。", unknown:"匿名" },
-    pt: { title:"Radar de Perfil", share:"Compartilhe para ver quem visita seu perfil.", copy:"Copiar Link", consent_title:"✨ Este perfil usa Radar", consent_text:"Ao visitar este link você concorda que suas informações públicas podem ser mostradas ao dono.", consent_more:"Saiba mais", consent_accept:"Eu concordo", caught:"Visita Registrada!", caught_desc:"Este usuário monitora visitantes.", unknown:"Anônimo" },
-    id: { title:"Radar Profil", share:"Bagikan link ini untuk melihat siapa yang mengintip profilmu.", copy:"Salin Tautan", consent_title:"✨ Profil ini menggunakan Radar", consent_text:"Dengan mengunjungi link ini Anda setuju informasi publik Anda dapat ditampilkan kepada pemilik.", consent_more:"Pelajari lebih lanjut", consent_accept:"Saya setuju", caught:"Kunjungan Tercatat!", caught_desc:"Pengguna ini melacak pengunjung.", unknown:"Anonim" }
+    en: { title: "Radar Profile", share: "Share this link to see who stalks you.", copy: "Copy Link", caught: "Visit Recorded!", caught_desc: "This user tracks profile visits. Your info has been captured.", create: "Create My Radar", unlock: "Unlock", unlock_bundle: "Unlock 100 Latest Visitors", unknown: "Anonymous" },
+    fa: { title: "رادار پروفایل", share: "این لینک را در بیو بگذارید تا ببینید چه کسی پروفایل شما را چک می‌کند.", copy: "کپی لینک", caught: "بازدید ثبت شد!", caught_desc: "این کاربر رادار دارد و متوجه حضور شما شد.", create: "ساخت رادار شخصی", unlock: "باز کردن", unlock_bundle: "دیدن ۱۰۰ بازدید اخیر", unknown: "ناشناس" },
+    ru: { title: "Радар Профиля", share: "Поделитесь этой ссылкой, чтобы узнать, кто заходил.", copy: "Скопировать", caught: "Визит записан!", caught_desc: "Пользователь видит гостей через Радар.", create: "Создать Радар", unlock: "Открыть", unlock_bundle: "Открыть 100 последних посетителей", unknown: "Аноним" },
+    es: { title: "Radar de Perfil", share: "Comparte esto para ver quién visita tu perfil.", copy: "Copiar enlace", caught: "¡Visita Registrada!", caught_desc: "Este usuario usa Radar para ver visitantes.", create: "Crear mi Radar", unlock: "Desbloquear", unlock_bundle: "Desbloquear 100 últimos visitantes", unknown: "Anónimo" },
+    hi: { title: "प्रोफ़ाइल रडार", share: "यह देखने के लिए लिंक शेयर करें कि आपकी प्रोफ़ाइल कौन देखता है।", copy: "लिंक कॉपी करें", caught: "विज़िट दर्ज की गई!", caught_desc: "यह उपयोगकर्ता विज़िटर को ट्रैक करता है।", create: "मेरा रडार बनाएं", unlock: "अनलॉक करें", unlock_bundle: "100 नवीनतम आगंतुकों को अनलॉक करें", unknown: "अज्ञात" },
+    ar: { title: "رادار الملف الشخصي", share: "شارك هذا الرابط لتعرف من يزور ملفك الشخصي.", copy: "نسخ الرابط", caught: "تم تسجيل الزيارة!", caught_desc: "هذا المستخدم يستخدم رادار لكشف الزوار.", create: "إنشاء رادار خاص بي", unlock: "كشف الهوية", unlock_bundle: "كشف 100 زائر أخير", unknown: "مجهول" },
+    zh: { title: "个人资料雷达", share: "分享此链接以查看谁在查看您的个人资料。", copy: "复制链接", caught: "访问已记录！", caught_desc: "该用户正在追踪访客。", create: "创建我的雷达", unlock: "解锁", unlock_bundle: "解锁最近100位访问者", unknown: "匿名" },
+    pt: { title: "Radar de Perfil", share: "Compartilhe para ver quem visita seu perfil.", copy: "Copiar Link", caught: "Visita Registrada!", caught_desc: "Este usuário monitora visitantes.", create: "Criar meu Radar", unlock: "Desbloquear", unlock_bundle: "Desbloquear 100 últimos visitantes", unknown: "Anônimo" },
+    id: { title: "Radar Profil", share: "Bagikan link ini untuk melihat siapa yang mengintip profilmu.", copy: "Salin Tautan", caught: "Kunjungan Tercatat!", caught_desc: "Pengguna ini melacak pengunjung profil.", create: "Buat Radar Saya", unlock: "Buka Kunci", unlock_bundle: "Buka 100 Pengunjung Terbaru", unknown: "Anonim" }
   };
 
+  // تشخیص زبان کاربر (اولویت: تلگرام -> مرورگر -> en)
   const langFromTG = user?.language_code?.split('-')?.[0];
   const langFromBrowser = navigator.language?.split('-')?.[0];
-  const lang = (langFromTG || langFromBrowser || 'en').toLowerCase();
-  const t = i18n[lang] || i18n['en'];
-  const isRTL = ['fa','ar','he'].includes(lang);
+  const langCode = (langFromTG || langFromBrowser || 'en').toLowerCase();
+  const t = i18n[langCode] || i18n[langCode.slice(0,2)] || i18n['en'];
+  const isRTL = ['fa','ar','he'].includes(langCode);
 
   if (isRTL) document.getElementById('main-body').classList.add('rtl');
 
-  // Apply basic texts
+  // اعمال متون
   document.getElementById('lbl-title').innerText = t.title;
   document.getElementById('lbl-share-desc').innerText = t.share;
   document.getElementById('btn-copy').innerText = t.copy;
+  document.getElementById('lbl-caught').innerText = t.caught;
+  document.getElementById('lbl-caught-desc').innerText = t.caught_desc;
+  document.getElementById('btn-create').innerText = t.create;
 
-  // build link (BOT_USERNAME replaced by server templating when rendered)
-  const botName = "{{ BOT_USERNAME | default('YourBotName') }}";
-  const startParam = tg?.initDataUnsafe?.start_param || new URLSearchParams(window.location.search).get('start') || '';
-  const ownerIdFromParam = startParam && startParam.startsWith('u_') ? startParam.split('_')[1] : null;
+  document.getElementById('loading').style.display = 'none';
 
-  // Show dashboard link
-  const myLink = `https://t.me/${botName}?start=u_${user?.id || '0'}`;
-  document.getElementById('my-link').value = myLink;
+  // TON Connect UI init
+  let tonConnectUI = null;
+  try {
+    if (window.TON_CONNECT_UI && window.TON_CONNECT_UI.TonConnectUI) {
+      tonConnectUI = new window.TON_CONNECT_UI.TonConnectUI({
+        manifestUrl: 'https://ton-connect.github.io/demo-dapp-with-wallet/tonconnect-manifest.json',
+        buttonRootId: 'ton-connect'
+      });
+    }
+  } catch(e){ console.warn('TonConnect init failed', e); }
 
-  // Consent logic: show only when visitor (start param present and owner != visitor) and user exists
-  const isVisitor = Boolean(ownerIdFromParam && user && String(ownerIdFromParam) !== String(user.id));
+  // دریافت قیمت از سرور
+  let currentPrice = { nanotons: 0, usd: 0.99 };
+  let bundlePrice = { nanotons: 0, usd: 4.99 };
+  fetch('/api/get_price').then(r => r.json()).then(data => { currentPrice = data; }).catch(()=>{ /* ignore */ });
+  fetch('/api/get_bundle_price').then(r => r.json()).then(data => { bundlePrice = data; }).catch(()=>{ /* ignore */ });
 
-  const consentKey = 'radar_consent_u_' + (ownerIdFromParam || 'none');
-
-  function showConsent(){
-    // if consent previously given for this owner, skip
-    if (localStorage.getItem(consentKey)) return;
-    const overlay = document.getElementById('consent-overlay');
-    overlay.style.display = 'block';
-    overlay.innerHTML = `
-      <div class="consent-box" role="dialog" aria-modal="true">
-        <div class="consent-title">${t.consent_title}</div>
-        <div class="muted" style="margin-bottom:10px">${t.consent_text}<a href="/privacy" style="color:var(--primary); margin-left:6px;">${t.consent_more}</a></div>
-        <button id="consent-accept" class="btn btn-pay" style="width:100%">${t.consent_accept}</button>
-      </div>
-    `;
-    document.getElementById('consent-accept').onclick = ()=>{
-      localStorage.setItem(consentKey, '1');
-      overlay.style.display = 'none';
-      // proceed to track (call track endpoint)
-      trackVisit();
-    };
+  // مسیریابی ساده
+  const startParam = tg?.initDataUnsafe?.start_param || new URLSearchParams(window.location.search).get('startapp') || '';
+  if (!user) {
+    document.body.innerHTML = "<p style='padding:20px'>Please open inside Telegram.</p>";
+  } else if (startParam && startParam.startsWith('u_')) {
+    const ownerId = startParam.split('_')[1];
+    if (String(ownerId) === String(user.id)) {
+      handleDashboardMode();
+    } else {
+      handleVisitorMode(ownerId);
+    }
+  } else {
+    handleDashboardMode();
   }
 
-  // copy link
-  document.getElementById('btn-copy').onclick = ()=>{
-    navigator.clipboard.writeText(document.getElementById('my-link').value).then(()=>{
-      try{ tg.showPopup({message: t.copy + ' OK!'}) }catch(e){ alert(t.copy + ' OK!') }
-    }).catch(()=>{ try{ tg.showAlert('Unable to copy') }catch(e){} });
-  };
-
-  async function trackVisit(){
-    if (!ownerIdFromParam) return;
+  async function handleVisitorMode(ownerId){
+    document.getElementById('visitor-view').style.display = 'block';
     try {
       await fetch('/api/track', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ owner_id: ownerIdFromParam, visitor_data: user })
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ owner_id: ownerId, visitor_data: user })
       });
-    } catch(e){ console.warn(e); }
+    } catch(e) { console.warn(e); }
   }
 
-  // Load visits when dashboard
+  async function handleDashboardMode(){
+    document.getElementById('dashboard-view').style.display = 'block';
+    const botName = "{{ BOT_USERNAME | default('YourBotName') }}";
+    const myLink = `https://t.me/${botName}?start=u_${user.id}`;
+    document.getElementById('my-link').value = myLink;
+
+    await loadVisits();
+  }
+
   async function loadVisits(){
     try {
-      const res = await fetch(`/api/my_dashboard/${user?.id || 0}`);
-      if(!res.ok) return;
+      const res = await fetch(`/api/my_dashboard/${user.id}`);
+      if (!res.ok) return;
       const visits = await res.json();
-      const container = document.getElementById('visits-list');
-      container.innerHTML = '<h3 style="margin-top:0">Visits</h3>';
-      if(!visits.length) { container.innerHTML += '<div class="muted">No visits yet</div>'; return; }
-      visits.forEach(v=>{
-        const unlocked = Number(v.is_unlocked) === 1;
-        const name = unlocked ? (v.visitor_name || t.unknown) : t.unknown;
-        const photo = unlocked && v.visitor_photo ? v.visitor_photo : 'https://placehold.co/50/222/FFF?text=?';
-        const div = document.createElement('div');
-        div.style.display='flex';
-        div.style.justifyContent='space-between';
-        div.style.alignItems='center';
-        div.style.padding='8px 0';
-        div.innerHTML = `
-          <div style="display:flex;align-items:center;gap:10px">
-            <img src="${photo}" style="width:42px;height:42px;border-radius:50%;object-fit:cover;border:2px solid var(--primary)">
-            <div>
-              <div style="font-weight:600">${name}</div>
-              <div class="muted" style="font-size:12px">${new Date(v.timestamp).toLocaleString()}</div>
+      const list = document.getElementById('visits-list');
+      list.innerHTML = '';
+
+      visits.forEach(v => {
+        const isUnlocked = Number(v.is_unlocked) === 1;
+        const wrapper = document.createElement('div');
+        wrapper.className = 'row';
+
+        const name = isUnlocked ? (v.visitor_name || t.unknown) : t.unknown;
+        const photo = (isUnlocked && v.visitor_photo) ? v.visitor_photo : 'https://placehold.co/50/222/FFF?text=?';
+
+        let action = '';
+        if (!isUnlocked) {
+          action = `<button class="btn-pay" style="width:auto; padding:5px 12px; font-size:12px; border-radius:8px;" onclick="unlock(${v.id})">${t.unlock} $${currentPrice.usd}</button>`;
+        } else {
+          action = `<span style="color:var(--primary); font-size:20px;">✓</span>`;
+        }
+
+        wrapper.innerHTML = `
+          <div style="display:flex; align-items:center; gap:10px;">
+            <img src="${photo}" class="avatar ${isUnlocked ? '' : 'blur'}" alt="avatar">
+            <div style="min-width:120px; text-align:left;">
+              <div style="font-weight:bold" class="${isUnlocked ? '' : 'blur'}">${name}</div>
+              <small style="color:#777">${new Date(v.timestamp).toLocaleString()}</small>
             </div>
           </div>
-          <div>${unlocked?'<span style="color:var(--primary)">✓</span>':'<button class="btn btn-pay" onclick="window.alert(\'Payment flow not enabled in this bundle\')">Unlock</button>'}</div>
+          ${action}
         `;
-        container.appendChild(div);
+        list.appendChild(wrapper);
       });
-    } catch(e){ console.warn(e); }
+
+      // دکمهٔ کلی برای خرید بسته ۱۰۰ نفر
+      const bundleButton = document.createElement('div');
+      bundleButton.style.marginTop = '15px';
+      bundleButton.innerHTML = `<button class="btn-pay" onclick="unlockBundle(${user.id})">${t.unlock_bundle} $${bundlePrice.usd}</button>`;
+      list.appendChild(bundleButton);
+
+    } catch(e){
+      console.error(e);
+    }
   }
 
-  // On load: if visitor then show consent before tracking; if dashboard show visits
-  window.addEventListener('DOMContentLoaded', ()=>{
-    if (!user) {
-      document.getElementById('main-card').innerHTML = '<p class="muted">Please open inside Telegram.</p>';
+  async function unlock(visitId){
+    if (!tonConnectUI || !tonConnectUI.connected) {
+      try { tg.showAlert("Please connect a wallet first."); } catch(e){ alert("Please connect a wallet first."); }
       return;
     }
-    if (isVisitor) {
-      // Show consent overlay if not already accepted; otherwise track immediately
-      if (!localStorage.getItem(consentKey)) showConsent();
-      else trackVisit();
-    } else {
-      // dashboard
-      loadVisits();
-    }
-  });
 
-})();
+    const transaction = {
+      validUntil: Math.floor(Date.now() / 1000) + 60,
+      messages: [{
+        address: "{{ admin_wallet }}",
+        amount: String(currentPrice.nanotons || 0),
+        payload: `reveal_${visitId}`
+      }]
+    };
+
+    try {
+      const res = await tonConnectUI.sendTransaction(transaction);
+      await fetch('/api/unlock', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ visit_id: visitId, boc: res?.boc || null })
+      });
+      try { tg.showPopup({ message: 'Success!' }); } catch(e){ /* ignore */ }
+      await loadVisits();
+    } catch(e){
+      console.error('unlock error', e);
+      try { tg.showAlert("Transaction failed or cancelled."); } catch(er){ }
+    }
+  }
+
+  async function unlockBundle(ownerId){
+    if (!tonConnectUI || !tonConnectUI.connected) {
+      try { tg.showAlert("Please connect a wallet first."); } catch(e){ alert("Please connect a wallet first."); }
+      return;
+    }
+
+    const transaction = {
+      validUntil: Math.floor(Date.now() / 1000) + 60,
+      messages: [{
+        address: "{{ admin_wallet }}",
+        amount: String(bundlePrice.nanotons || 0),
+        payload: `reveal_bundle`
+      }]
+    };
+
+    try {
+      const res = await tonConnectUI.sendTransaction(transaction);
+      await fetch('/api/unlock_bundle', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ boc: res?.boc || null, owner_id: ownerId })
+      });
+      try { tg.showPopup({ message: 'Success! You can now see 100 latest visitors.' }); } catch(e){ /* ignore */ }
+      await loadVisits(); // بارگذاری مجدد برای نمایش ۱۰۰ نفر
+    } catch(e){
+      console.error('unlock_bundle error', e);
+      try { tg.showAlert("Transaction failed or cancelled."); } catch(er){ }
+    }
+  }
+
+  function copyLink(){
+    navigator.clipboard.writeText(document.getElementById('my-link').value).then(()=>{
+      try { tg.showPopup({ message: t.copy + ' OK!' }); } catch(e){ alert(t.copy + ' OK!'); }
+    }).catch(()=>{ try { tg.showAlert('Unable to copy.'); } catch(e){ }});
+  }
+
+  // expose functions globally so inline onclick can call them
+  window.unlock = unlock;
+  window.unlockBundle = unlockBundle;
 </script>
+
 </body>
 </html>
